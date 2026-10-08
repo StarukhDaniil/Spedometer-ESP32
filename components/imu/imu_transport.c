@@ -1,111 +1,80 @@
 #include "imu_transport.h"
-
 #include "driver/spi_master.h"
-#include <string.h>
 
-#define TXRX_BUF_SIZE       1024
+#define IMU_SPI_HOST SPI3_HOST
+static spi_device_handle_t s_device;
 
-#define SPI_HOST            SPI3_HOST
-
-#define MISO_PIN            16
-#define MOSI_PIN            17
-#define SCLK_PIN            18
-#define CS_PIN              19
-
-#define WRITE_BIT           0x00
-#define READ_BIT            BIT7
-
-typedef struct {
-    uint8_t *tx_buf;
-    uint8_t *rx_buf;
-    spi_device_handle_t spi_dev;
-    EventGroupHandle_t eg;
-} imu_transport_runtime_t;
-
-static imu_transport_runtime_t s_runtime = {0};
-
-esp_err_t _imu_t_init() {
-    spi_bus_config_t bus_cfg = {
-        .miso_io_num = MISO_PIN,
-        .mosi_io_num = MOSI_PIN,
-        .sclk_io_num = SCLK_PIN,
-        .data_io_default_level = 1,
-    };
-
-    esp_err_t rc = spi_bus_initialize(SPI_HOST, &bus_cfg, SPI_DMA_CH_AUTO);
-    if (rc) return rc;
-
-    s_runtime.tx_buf = spi_bus_dma_memory_alloc(SPI_HOST, TXRX_BUF_SIZE, 0);
-    if (s_runtime.tx_buf == NULL) return ESP_ERR_NO_MEM;
-
-    s_runtime.rx_buf = spi_bus_dma_memory_alloc(SPI_HOST, TXRX_BUF_SIZE, 0);
-    if (s_runtime.rx_buf == NULL) return ESP_ERR_NO_MEM;
-
-    spi_device_interface_config_t dev_cfg = {
-        .mode = 3,
-        .clock_source = SPI_CLK_SRC_DEFAULT,
-        .clock_speed_hz = 10 * 1000 * 1000,
-        .dummy_bits = 0,
-        .spics_io_num = CS_PIN
-    };
-
-    rc = spi_bus_add_device(SPI_HOST, &dev_cfg, &s_runtime.spi_dev);
-    if (rc) return rc;
-
-    s_runtime.eg = xEventGroupCreate();
-    if (s_runtime.eg == NULL) {
-        return ESP_FAIL;
+/* The component owns SPI3. Public calls must be serialized by the caller. */
+esp_err_t _imu_t_init(void)
+{
+    if (s_device != NULL) {
+        return ESP_OK;
     }
 
-    return ESP_OK;
-}
-
-esp_err_t _imu_t_write_reg(uint8_t addr, uint8_t val) {
-    s_runtime.tx_buf[0] = WRITE_BIT | addr;
-    s_runtime.tx_buf[1] = val;
-
-    spi_transaction_t transaction = {
-        .length = 2,
-        .rx_buffer = NULL,
-        .tx_buffer = s_runtime.tx_buf
+    const spi_bus_config_t bus = {
+        .miso_io_num = 16, .mosi_io_num = 17, .sclk_io_num = 18,
+        .quadwp_io_num = -1, .quadhd_io_num = -1,
+        .max_transfer_sz = 1024,
     };
 
-    esp_err_t rc = spi_device_transmit(s_runtime.spi_dev, &transaction);
-    if (rc) return rc;
+    esp_err_t rc = spi_bus_initialize(IMU_SPI_HOST, &bus, SPI_DMA_CH_AUTO);
 
-    return ESP_OK;
-}
+    if (rc != ESP_OK) {
+        return rc;
+    }
 
-esp_err_t _imu_t_read_reg(uint8_t addr, uint8_t *out) {
-    s_runtime.tx_buf[0] = READ_BIT | addr;
-
-    spi_transaction_t transaction = {
-        .length = 2,
-        .rx_buffer = s_runtime.rx_buf,
-        .tx_buffer = s_runtime.tx_buf
+    const spi_device_interface_config_t device = {
+        .command_bits = 8, .mode = 3,
+        .clock_speed_hz = 10 * 1000 * 1000,
+        .spics_io_num = 19, .queue_size = 1,
     };
 
-    esp_err_t rc = spi_device_transmit(s_runtime.spi_dev, &transaction);
-    if (rc) return rc;
+    rc = spi_bus_add_device(IMU_SPI_HOST, &device, &s_device);
 
-    *out = s_runtime.rx_buf[1];
+    if (rc != ESP_OK) {
+        spi_bus_free(IMU_SPI_HOST);
+    }
 
-    return ESP_OK;
+    return rc;
 }
 
-esp_err_t _imu_t_read(uint8_t start_addr, uint8_t *out, size_t size) {
-    s_runtime.tx_buf[0] = READ_BIT | start_addr;
+esp_err_t _imu_t_write_reg(uint8_t addr, uint8_t val)
+{
+    if (addr > 0x7f) {
+        return ESP_ERR_INVALID_ARG;
+    }
+
+    if (s_device == NULL) {
+        return ESP_ERR_INVALID_STATE;
+    }
 
     spi_transaction_t transaction = {
-        .length = size + 1,
-        .rx_buffer = s_runtime.rx_buf,
-        .tx_buffer = s_runtime.tx_buf
+        .cmd = addr, .length = 8,
+        .flags = SPI_TRANS_USE_TXDATA, .tx_data = {val},
     };
 
-    esp_err_t rc = spi_device_transmit(s_runtime.spi_dev, &transaction);
-    if (rc) return rc;
+    return spi_device_transmit(s_device, &transaction);
+}
 
-    memcpy(out, s_runtime.rx_buf + 1, size);
+esp_err_t _imu_t_read_reg(uint8_t addr, uint8_t *out)
+{
+    return _imu_t_read(addr, out, 1);
+}
 
-    return ESP_OK;
+esp_err_t _imu_t_read(uint8_t addr, uint8_t *out, size_t size)
+{
+    if (out == NULL || size == 0 || size > 1024 || addr > 0x7f) {
+        return ESP_ERR_INVALID_ARG;
+    }
+
+    if (s_device == NULL) {
+        return ESP_ERR_INVALID_STATE;
+    }
+
+    /* ESP-IDF supplies a DMA bounce buffer for unaligned/non-DMA memory. */
+    spi_transaction_t transaction = {
+        .cmd = 0x80 | addr, .length = size * 8, .rx_buffer = out,
+    };
+
+    return spi_device_transmit(s_device, &transaction);
 }
