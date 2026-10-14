@@ -7,8 +7,20 @@
 #include "freertos/FreeRTOS.h"
 #include "host/ble_hs.h"
 
-/* Protect whole values against concurrent application and host task access. */
 static portMUX_TYPE value_lock = portMUX_INITIALIZER_UNLOCKED;
+static StaticEventGroup_t event_group_storage;
+static EventGroupHandle_t event_group;
+
+void ble_characteristics_init(void)
+{
+    event_group = xEventGroupCreateStatic(&event_group_storage);
+    configASSERT(event_group != NULL);
+}
+
+EventGroupHandle_t ble_get_event_group(void)
+{
+    return event_group;
+}
 
 int ble_characteristic_access(uint16_t conn_handle, uint16_t attr_handle,
                               struct ble_gatt_access_ctxt *ctxt, void *arg)
@@ -20,8 +32,6 @@ int ble_characteristic_access(uint16_t conn_handle, uint16_t attr_handle,
         return BLE_ATT_ERR_UNLIKELY;
     }
 
-    /* NimBLE reads notification payloads locally, bypassing ATT permissions.
-     * Check the live link too, including when restoring bonded subscriptions. */
     if (!ble_security_is_encrypted()) {
         return BLE_ATT_ERR_INSUFFICIENT_ENC;
     }
@@ -55,6 +65,12 @@ int ble_characteristic_access(uint16_t conn_handle, uint16_t attr_handle,
         portENTER_CRITICAL(&value_lock);
         memcpy(chr->value, snapshot, chr->size);
         portEXIT_CRITICAL(&value_lock);
+
+        /* Signal only after committing the value and releasing its lock:
+         * awakened application tasks may immediately call ble_get_value(). */
+        if (chr->write_event_bits != 0) {
+            xEventGroupSetBits(event_group, chr->write_event_bits);
+        }
         
         return 0;
     

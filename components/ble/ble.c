@@ -1,6 +1,7 @@
 #include "ble.h"
 #include "ble_gatt.h"
 #include "ble_security.h"
+#include "ble_characteristics.h"
 
 #include <string.h>
 #include "esp_log.h"
@@ -81,6 +82,7 @@ static int gap_event(struct ble_gap_event *event, void *arg)
         break;
     
     case BLE_GAP_EVENT_DISCONNECT:
+        ESP_LOGI(TAG, "Disconnected: reason=%d", event->disconnect.reason);
         connection_handle = BLE_HS_CONN_HANDLE_NONE;
         
         ble_security_on_disconnect();
@@ -88,7 +90,16 @@ static int gap_event(struct ble_gap_event *event, void *arg)
         
         break;
     
-    case BLE_GAP_EVENT_ENC_CHANGE:
+    case BLE_GAP_EVENT_ENC_CHANGE: {
+        struct ble_gap_conn_desc desc;
+        if (ble_gap_conn_find(event->enc_change.conn_handle, &desc) == 0) {
+            ESP_LOGI(TAG, "Security changed: status=%d encrypted=%u authenticated=%u "
+                     "bonded=%u key_size=%u", event->enc_change.status,
+                     (unsigned)desc.sec_state.encrypted,
+                     (unsigned)desc.sec_state.authenticated,
+                     (unsigned)desc.sec_state.bonded,
+                     (unsigned)desc.sec_state.key_size);
+        }
         if (event->enc_change.status != 0 || !ble_security_is_encrypted()) {
             ESP_LOGW(TAG, "Encryption failed or insufficient: %d",
                      event->enc_change.status);
@@ -99,7 +110,7 @@ static int gap_event(struct ble_gap_event *event, void *arg)
         }
 
         break;
-    
+    }
     case BLE_GAP_EVENT_REPEAT_PAIRING:
         return ble_security_on_repeat_pairing(event->repeat_pairing.conn_handle);
     
@@ -142,6 +153,7 @@ static void host_task(void *arg)
 
 void ble_init(void)
 {
+    ble_characteristics_init();
     ESP_ERROR_CHECK(nvs_flash_init());
     ESP_ERROR_CHECK(nimble_port_init());
     ble_hs_cfg.sync_cb = on_sync;

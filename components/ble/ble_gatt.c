@@ -29,13 +29,14 @@ static struct ble_characteristic characteristics[] = {
         .uuid = &BLE_CONFIG_UUID.u,
         .value = &config_value,
         .size = sizeof(config_value),
+        .write_event_bits = BLE_EVENT_CONFIG_WRITTEN,
         .flags = BLE_GATT_CHR_F_READ | BLE_GATT_CHR_F_WRITE |
                  BLE_GATT_CHR_F_READ_ENC | BLE_GATT_CHR_F_WRITE_ENC,
     },
 };
 
 #define CHARACTERISTIC_COUNT (sizeof(characteristics) / sizeof(characteristics[0]))
-/* Static lifetime is required by NimBLE; final entry is the zero sentinel. */
+
 static struct ble_gatt_chr_def gatt_characteristics[CHARACTERISTIC_COUNT + 1];
 static const struct ble_gatt_svc_def services[] = {
     {
