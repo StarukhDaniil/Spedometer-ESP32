@@ -4,14 +4,26 @@
 #include <stddef.h>
 #include "esp_err.h"
 #include "host/ble_uuid.h"
+#include "freertos/FreeRTOS.h"
+#include "freertos/event_groups.h"
 
 #define BLE_TELEMETRY_SIZE 12
+
+#define BLE_EVENT_CONFIG_WRITTEN ((EventBits_t)1U << 0)
 
 extern const ble_uuid128_t BLE_TELEMETRY_UUID;
 extern const ble_uuid128_t BLE_CONFIG_UUID;
 
 /* Call once at startup; advertises with the NimBLE GAP name from menuconfig. */
 void ble_init(void);
+
+/* Available after ble_init(); owned by BLE, so do not delete or set its bits.
+ * BLE_EVENT_CONFIG_WRITTEN is set after each accepted client config write,
+ * including same-value writes. Local ble_set_value() calls do not set it.
+ * Wait with xEventGroupWaitBits(..., pdTRUE, pdFALSE, ...) to clear on exit.
+ * All tasks already waiting on the bit are released. Events can coalesce;
+ * use ble_get_value() to read the latest value, not a per-write payload. */
+EventGroupHandle_t ble_get_event_group(void);
 
 /* Copy a local characteristic value after ble_init(), from task context.
  * UUIDs are compared by value. Size must match the profile (telemetry: BLE_TELEMETRY_SIZE,
