@@ -2,10 +2,6 @@
 #include "driver/spi_master.h"
 
 #define IMU_SPI_HOST    SPI3_HOST
-#define MISO_PIN        16
-#define MOSI_PIN        17
-#define SCLK_PIN        18
-#define CS_PIN          19
 
 static spi_device_handle_t s_device;
 
@@ -16,9 +12,9 @@ esp_err_t _imu_t_init(void)
     }
 
     const spi_bus_config_t bus = {
-        .miso_io_num = MISO_PIN, .mosi_io_num = MOSI_PIN, .sclk_io_num = SCLK_PIN,
+        .miso_io_num = IMU_MISO_PIN, .mosi_io_num = IMU_MOSI_PIN, .sclk_io_num = IMU_SCLK_PIN,
         .quadwp_io_num = -1, .quadhd_io_num = -1,
-        .max_transfer_sz = 1024,
+        .max_transfer_sz = IMU_FIFO_CAPACITY_BYTES,
     };
 
     esp_err_t rc = spi_bus_initialize(IMU_SPI_HOST, &bus, SPI_DMA_CH_AUTO);
@@ -30,7 +26,7 @@ esp_err_t _imu_t_init(void)
     const spi_device_interface_config_t device = {
         .command_bits = 8, .mode = 3,
         .clock_speed_hz = 10 * 1000 * 1000,
-        .spics_io_num = CS_PIN, .queue_size = 1,
+        .spics_io_num = IMU_CS_PIN, .queue_size = 1,
     };
 
     rc = spi_bus_add_device(IMU_SPI_HOST, &device, &s_device);
@@ -67,7 +63,7 @@ esp_err_t _imu_t_read_reg(uint8_t addr, uint8_t *out)
 
 esp_err_t _imu_t_read(uint8_t addr, uint8_t *out, size_t size)
 {
-    if (out == NULL || size == 0 || size > 1024 || addr > 0x7f) {
+    if (out == NULL || size == 0 || size > IMU_FIFO_CAPACITY_BYTES || addr > 0x7f) {
         return ESP_ERR_INVALID_ARG;
     }
 

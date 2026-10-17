@@ -4,6 +4,13 @@
 #include <stddef.h>
 #include "esp_err.h"
 
+#define IMU_FIFO_CAPACITY_BYTES 8192
+
+#define IMU_MISO_PIN 16
+#define IMU_MOSI_PIN 17
+#define IMU_SCLK_PIN 18
+#define IMU_CS_PIN   15
+
 esp_err_t _imu_t_init(void);
 esp_err_t _imu_t_write_reg(uint8_t addr, uint8_t val);
 esp_err_t _imu_t_read_reg(uint8_t addr, uint8_t *out);
